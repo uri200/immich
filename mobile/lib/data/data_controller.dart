@@ -20,10 +20,18 @@ class DataController {
   /// Initalize the base data system. Sets up primary/logging DBs and the settings store
   ///
   /// `disableStoreWatching` prevents continually updating the setting store's cache on change
-  static Future<(DataController, bool)> init({required ApiClient apiClient, bool disableStoreWatching = false}) async {
+  ///
+  /// `attachments` are extra SQLite databases attached to the primary connection, so that a
+  /// single statement can read across them. immich-sync fork: used for the offline mirror.
+  static Future<(DataController, bool)> init({
+    required ApiClient apiClient,
+    bool disableStoreWatching = false,
+    // immich-sync fork
+    List<SqliteAttachment> attachments = const [],
+  }) async {
     await configureSqliteCache();
 
-    final (db, updatePool) = await openSqliteConnectionWithUpdatePool(name: 'immich');
+    final (db, updatePool) = await openSqliteConnectionWithUpdatePool(name: 'immich', attachments: attachments);
     final drift = Drift.sqlite(db, updatePool);
 
     final (logDb, wasRecreated) = await _openLoggerDatabase();
