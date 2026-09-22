@@ -38,7 +38,6 @@ import 'package:immich_mobile/services/deep_link.service.dart';
 import 'package:immich_mobile/theme/dynamic_theme.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
 import 'package:immich_mobile/utils/bootstrap.dart';
-import 'package:immich_mobile/utils/brand_translation_loader.dart';
 import 'package:immich_mobile/utils/cache/widgets_binding.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:immich_mobile/utils/licenses.dart';
@@ -283,8 +282,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
     return ProviderScope(
       overrides: [localeProvider.overrideWithValue(context.locale)],
       child: MaterialApp.router(
-        // immich-sync fork
-        title: kAppName,
+        title: 'Immich',
         debugShowCheckedModeBanner: true,
         scaffoldMessengerKey: scaffoldMessengerKey,
         localizationsDelegates: context.localizationDelegates,
@@ -320,8 +318,7 @@ class MainWidget extends StatelessWidget {
       path: translationsPath,
       useFallbackTranslations: true,
       fallbackLocale: locales.values.first,
-      // immich-sync fork: renames the product in every translated string.
-      assetLoader: const BrandTranslationLoader(CodegenLoader()),
+      assetLoader: const CodegenLoader(),
       child: const ImmichApp(),
     );
   }

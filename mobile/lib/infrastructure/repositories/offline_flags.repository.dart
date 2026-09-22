@@ -10,10 +10,10 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
+import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/offline/offline.model.dart';
 import 'package:immich_mobile/domain/models/offline/offline_policy.model.dart';
-import 'package:immich_mobile/infrastructure/repositories/db.repository.dart';
 import 'package:immich_mobile/utils/offline_paths.dart';
 import 'package:logging/logging.dart';
 
@@ -401,8 +401,7 @@ class OfflineFlagsRepository {
   ///
   /// The *count* is not asked for any more: how many files count towards progress is a question about the entries, and
   /// [OfflineIndex] answers it from them rather than from a second figure that had to be kept in step.
-  Future<int> heldBytes() async =>
-      (await _one('SELECT COALESCE(SUM(size), 0) AS b FROM held')).data['b'] as int;
+  Future<int> heldBytes() async => (await _one('SELECT COALESCE(SUM(size), 0) AS b FROM held')).data['b'] as int;
 
   /// When a held file is no longer selected, over the aliases [_reclaimFrom] introduces.
   static final String _unselected = _unselectedOver('h', 'w', 'a');

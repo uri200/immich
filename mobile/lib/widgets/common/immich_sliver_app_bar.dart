@@ -107,7 +107,7 @@ class _ImmichLogoWithText extends StatelessWidget {
     // amber reads on either — so the two files differ only in name, kept because
     // upstream's code path picks between them.
     child: SvgPicture.asset(
-      context.isDarkTheme ? 'assets/mirrich-logo-inline-dark.svg' : 'assets/mirrich-logo-inline-light.svg',
+      context.isDarkTheme ? 'assets/immich-logo-inline-dark.svg' : 'assets/immich-logo-inline-light.svg',
       height: 40,
     ),
   );

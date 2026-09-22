@@ -171,7 +171,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
         return null;
       }
       if (storedPath != null) {
-        return VideoSource.init(
+        return await VideoSource.init(
           path: CurrentPlatform.isAndroid ? Uri.file(storedPath).toString() : storedPath,
           type: VideoSourceType.file,
         );

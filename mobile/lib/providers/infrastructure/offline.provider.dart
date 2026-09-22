@@ -10,7 +10,7 @@ import 'package:immich_mobile/domain/services/offline_sync.service.dart';
 import 'package:immich_mobile/infrastructure/repositories/offline.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/offline_download.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/offline_flags.repository.dart';
-import 'package:immich_mobile/providers/backup/drift_backup.provider.dart';
+import 'package:immich_mobile/providers/backup/backup.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 
@@ -40,16 +40,13 @@ final offlineSyncServiceProvider = Provider<OfflineSyncService>((ref) {
   // fails with `PathNotFoundException` on every retry. Yielding to that is a deadlock, not a courtesy — the mirror stops
   // downloading for the life of the install, with nothing on any screen saying why. A failed item stays in
   // `uploadItems`, since that is what draws the error list, so it is excluded here by name.
-  service.bindBackupActivity(
-    () => ref.read(driftBackupProvider).uploadItems.values.any((item) => item.isFailed != true),
-  );
+  service.bindBackupActivity(() => ref.read(backupProvider).uploadItems.values.any((item) => item.isFailed != true));
 
   // And picks up again when the backup falls quiet. In practice a finished upload is itself a remote change, which
   // already wakes the mirror — but not when the last upload failed, and a mirror that waits for an unrelated event is a
   // mirror that looks broken.
-  bool isTransferring(DriftBackupState? state) =>
-      state?.uploadItems.values.any((item) => item.isFailed != true) ?? false;
-  ref.listen(driftBackupProvider, (previous, next) {
+  bool isTransferring(BackupState? state) => state?.uploadItems.values.any((item) => item.isFailed != true) ?? false;
+  ref.listen(backupProvider, (previous, next) {
     if (isTransferring(previous) && !isTransferring(next)) {
       service.checkSoon();
     }

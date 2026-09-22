@@ -178,7 +178,10 @@ class AssetMediaRepository {
         final directory = await getTemporaryDirectory();
         final copy = await File(stored).copy(p.join(directory.path, '$taskId-$displayName'));
         onProgress(1);
-        return (file: copy, cleanup: true, displayName: displayName);
+        // The copy is a loose file in the shared temp directory, not in one of its own, so it is
+        // itself the entity to clean up — [copy.parent] is the temp directory and must not be
+        // removed.
+        return (file: copy, tempEntity: copy, displayName: displayName);
       } catch (error, stack) {
         _log.warning('Could not share the stored copy of $displayName; falling back to download', error, stack);
       }
