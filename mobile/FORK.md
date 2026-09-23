@@ -4,6 +4,18 @@ This repository is a fork of [Immich](https://github.com/immich-app/immich). Onl
 Flutter app in `mobile/` and the Rust core it ships (`native/`). The server, web and ML components track upstream
 exactly, and the app works against an unmodified Immich server.
 
+## 0. This branch
+
+This is `uri200/immich`, branch `offline-mirror`: rcarpa's stack (§5, *Rebasing*) on an upstream release tag, with two
+differences.
+
+- **No identity commit.** `Mirrich, an identity and a build of its own` is left out, so the app keeps upstream's name,
+  icon and application id and installs over the official app instead of beside it. §4.1 describes the commit, not this
+  build. Passkeys stay upstream's (the server accepts them only from apps Immich signs).
+- **Full quality on demand**, one commit on top (`feat(mobile): full quality on demand in the viewer`, §3.8). It also
+  brings back an earlier rule of this fork: a photo whose original is stored offline shows that original even with
+  *Load original image* off, since reading it costs no network.
+
 ## 1. What this fork is
 
 Upstream Immich is a client for a server: photo bytes are streamed on demand into an OS-purgeable cache, and a rejected
@@ -272,6 +284,14 @@ signs in the cached user (`resumeAuthInfo`), so the library and owner-only actio
 - **Tile bar** under upstream's cloud glyph: thumbnail, preview and full copy, each empty, waiting, white (maintained)
   or amber (spare).
 - A line on upstream's free up space screen saying what deleting local originals costs offline.
+- **Full quality on demand** (this branch only, §0): a button beside the viewer's favourite
+  (`view_original_button.widget.dart`) shows which version is on screen — outlined HD for the preview, a spinner while
+  the original comes, filled HD once it is up, a crossed-out cloud when the server could not be reached — and a tap
+  fetches that one photo's original. Nothing is selected or stored offline for it: the bytes land in the opportunistic
+  cache like any fetched file and are trimmed with it. The ask (`ViewerOriginals`) lasts for the process. It is a counter
+  in `RemoteFullImageProvider`'s key, so each tap is a fresh load and a retry is not served the failure; that load skips
+  the thumbnail placeholder, so the preview on screen stays up until it is replaced, and it fails soft, where upstream's
+  error path would swap the photo for its thumbnail.
 
 Fork strings are English only, to keep out of upstream's i18n files.
 
@@ -294,7 +314,8 @@ hook tagged `// immich-sync fork`:
 | `lib/pages/common/splash_screen.page.dart`, `lib/routing/auth_guard.dart`, `lib/routing/router.dart` | Report session problems instead of logging out (R2); routes |
 | `lib/providers/auth.provider.dart` | Keep the cached user signed in when the token is rejected at launch (R2) |
 | `lib/services/api.service.dart` | Re-seed the auth cookie from the stored token |
-| `lib/utils/image_url_builder.dart`, `lib/presentation/widgets/images/*` | One URL for the original, so a stored one is served; whether it loads stays upstream's setting |
+| `lib/utils/image_url_builder.dart`, `lib/presentation/widgets/images/*` | One URL for the original, so a stored one is served. On this branch (§0) a stored original, or one asked for by the viewer's button, also loads with the setting off |
+| `lib/presentation/widgets/asset_viewer/asset_page.widget.dart`, `viewer_top_app_bar.widget.dart` | This branch (§0): rebuild the photo's provider when its original is asked for; the button beside the favourite |
 | `lib/presentation/widgets/asset_viewer/video_viewer.widget.dart` | Play stored videos from disk |
 | `lib/repositories/asset_media.repository.dart` | Share a stored copy instead of downloading |
 | `lib/presentation/widgets/images/thumbnail_tile.widget.dart` | The tile bar under upstream's glyph |
@@ -351,6 +372,7 @@ The fork is a stack of commits on an upstream release tag, the ones that could g
 | `feat(mobile): keep the session and the library when the server says no` | R2, §3.7 | Fork only |
 | `feat(mobile): Mirrich, an identity and a build of its own` | §4.1 | Fork only |
 | `docs(mobile): the fork's requirements and design` | This file | Fork only |
+| `feat(mobile): full quality on demand in the viewer` | §0, §3.8; this branch only, without the identity commit | Fork only |
 
 Every commit builds and passes the tests on its own, and none needs the ones above it. A change goes into the commit
 that owns it, not on top. After a rebase, check:

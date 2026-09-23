@@ -1,12 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/models/offline/offline_policy.model.dart';
+import 'package:immich_mobile/domain/utils/offline_index.dart';
 import 'package:immich_mobile/infrastructure/loaders/image_request.dart';
 import 'package:immich_mobile/infrastructure/repositories/offline_flags.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/presentation/widgets/images/animated_image_stream_completer.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/one_frame_multi_image_stream_completer.dart';
+import 'package:immich_mobile/presentation/widgets/images/viewer_originals.dart';
 import 'package:immich_mobile/utils/image_url_builder.dart';
 import 'package:immich_mobile/utils/offline_paths.dart';
 import 'package:openapi/api.dart';
@@ -79,6 +82,10 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
   /// Physical size of the thumbnail shown before the preview.
   final Size? thumbnailSize;
 
+  /// immich-sync fork: how many times the viewer's quality button asked for this photo's original
+  /// ([ViewerOriginals.attemptOf]). Zero is upstream's behaviour.
+  final int originalAttempt;
+
   const RemoteFullImageProvider({
     required this.assetId,
     required this.thumbhash,
@@ -87,6 +94,7 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     this.edited = true,
     this.isEdited = false,
     this.thumbnailSize,
+    this.originalAttempt = 0,
   });
 
   /// immich-sync fork: the same URL the offline store uses.
@@ -132,14 +140,18 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
 
     return OneFramePlaceholderImageStreamCompleter(
       _codec(loader, key, decode),
-      initialImage: loader.getInitialImage(
-        RemoteImageProvider.thumbnail(
-          assetId: key.assetId,
-          thumbhash: key.thumbhash,
-          edited: key.edited,
-          decodeSize: key.thumbnailSize,
-        ),
-      ),
+      // immich-sync fork: an original asked for by hand reloads a photo whose preview is already on screen, which stays
+      // up until this stream's first frame. Starting from the thumbnail would blur it before sharpening it.
+      initialImage: key.originalAttempt > 0
+          ? null
+          : loader.getInitialImage(
+              RemoteImageProvider.thumbnail(
+                assetId: key.assetId,
+                thumbhash: key.thumbhash,
+                edited: key.edited,
+                decodeSize: key.thumbnailSize,
+              ),
+            ),
       informationCollector: () => <DiagnosticsNode>[
         DiagnosticsProperty<ImageProvider>('Image provider', this),
         DiagnosticsProperty<String>('Asset Id', key.assetId),
@@ -162,7 +174,14 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     }
 
     final previewRequest = loader.request = _previewRequest(key, thumbhash);
-    final loadOriginal = assetType == AssetType.image && SettingsRepository.instance.appConfig.image.loadOriginal;
+    // immich-sync fork: a stored original costs no network, so an item kept at full quality shows the real photo even
+    // with the setting off, and so does one the viewer's quality button asked for.
+    final requested = key.originalAttempt > 0;
+    final loadOriginal =
+        assetType == AssetType.image &&
+        (SettingsRepository.instance.appConfig.image.loadOriginal ||
+            OfflineIndex.availability(key.assetId) == OfflineAvailability.full ||
+            requested);
     yield* loader.loadRequest(previewRequest, decode, isFinal: !loadOriginal);
 
     if (!loadOriginal) {
@@ -174,7 +193,31 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     }
 
     final originalRequest = loader.request = _originalRequest(key, thumbhash);
-    yield* loader.loadRequest(originalRequest, decode, isFinal: true);
+    yield* _loadOriginal(loader, key.assetId, originalRequest, decode, failSoft: requested);
+  }
+
+  /// immich-sync fork: tells [ViewerOriginals] whether the original reached the screen, for the viewer's quality
+  /// button. One asked for by hand fails soft — the preview stays up and the button offers a retry — where upstream's
+  /// error path would swap in the thumbnail.
+  Stream<ImageInfo> _loadOriginal(
+    ImageLoader loader,
+    String assetId,
+    RemoteImageRequest originalRequest,
+    ImageDecoderCallback decode, {
+    required bool failSoft,
+  }) async* {
+    var shown = false;
+    try {
+      await for (final image in loader.loadRequest(originalRequest, decode, isFinal: !failSoft)) {
+        shown = true;
+        yield image;
+      }
+    } finally {
+      if (!loader.isCancelled) {
+        ViewerOriginals.instance.settle(assetId, loaded: shown);
+      }
+    }
+    loader.isFinished = true;
   }
 
   Stream<Object> _animatedCodec(ImageLoader loader, RemoteFullImageProvider key, ImageDecoderCallback decode) async* {
@@ -230,12 +273,19 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
           thumbhash == other.thumbhash &&
           isAnimated == other.isAnimated &&
           edited == other.edited &&
-          isEdited == other.isEdited;
+          isEdited == other.isEdited &&
+          originalAttempt == other.originalAttempt;
     }
 
     return false;
   }
 
   @override
-  int get hashCode => assetId.hashCode ^ thumbhash.hashCode ^ isAnimated.hashCode ^ edited.hashCode ^ isEdited.hashCode;
+  int get hashCode =>
+      assetId.hashCode ^
+      thumbhash.hashCode ^
+      isAnimated.hashCode ^
+      edited.hashCode ^
+      isEdited.hashCode ^
+      originalAttempt.hashCode;
 }
