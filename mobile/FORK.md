@@ -1199,6 +1199,29 @@ out or clear anything because of it. It is *rendered* in two places, and only
 | App bar | Two cloud buttons, one per direction: offline copies and upstream's backup. Gated separately, so hiding the upload button on the library tab or an album does not hide this one. The offline one badges a red ✗ while the session is expired (§3.5) |
 | Thumbnail badge | Upstream's own cloud, kept verbatim, plus a meter under it for what the mirror holds (below) |
 | Free up space | Upstream's screen, plus one line saying what the deletion costs offline |
+| Viewer top bar | **Full quality on demand**: which version is on screen, and a tap that fetches this one photo's original (below) |
+
+**Full quality is asked for one photo at a time, and never stored for it.** With
+upstream's *Load original image* off — its default, and the right one for a server that
+may be off — the viewer stops at the preview and nothing on screen says so. A button beside
+the favourite (`view_original_button.widget.dart`) answers both halves: an outlined HD
+while the preview is showing, a spinner while the original comes, a filled HD once it is
+up, and a crossed-out cloud when the server could not be reached. Tapping the first or the
+last fetches that photo's original and nothing else.
+
+What comes back is **not a selection and not a spare**: it lands in the opportunistic
+cache like any other file the viewer fetched (`RemoteImagesImpl.keeping`), so it is
+trimmed under the cache limit with the rest and costs no decision to get rid of. *Save
+offline* is still the way to keep one. The ask itself (`ViewerOriginals`) lasts for the
+process, not across launches — it is about looking at a photo now.
+
+The ask is a counter in `RemoteFullImageProvider`'s key, so each tap is a fresh load
+rather than the cached preview-only image, and a retry is not served the failure. That
+load starts from the preview rather than the thumbnail, so the tap never blurs the photo
+before sharpening it, and it **fails soft**: upstream's error path swaps a photo whose
+original failed for its thumbnail, which for a server that is off means the tap would
+make the photo worse. The button is drawn only for a photo rendered from the server; one
+shown from the phone's own file is already the original.
 
 **The progress line only counts what can actually arrive.** A decision survives
 its item going into the trash, being moved to the locked folder, or leaving the
@@ -1723,6 +1746,9 @@ them can conflict.
 | `test/medium/repositories/offline_repository_test.dart` | What may be stored, and what the camera roll makes redundant (§3.2, §3.2.1) |
 | `test/medium/repositories/offline_flags_repository_test.dart` | Which band a held file falls into, against a real database (§3.2, §3.6) |
 | `lib/widgets/common/sign_out_dialog.dart` | Sign-out, with the downloads spelled out (R2) |
+| `lib/presentation/widgets/images/viewer_originals.dart` | Which originals the viewer was asked for by hand, and whether they arrived (§3.6) |
+| `lib/presentation/widgets/asset_viewer/view_original_button.widget.dart` | The viewer's full-quality-on-demand button (§3.6) |
+| `test/presentation/widgets/images/viewer_originals_test.dart` | Its states, and that each ask is a fresh load (§3.6) |
 
 **Modified upstream files** — each tagged with an `// immich-sync fork` comment.
 Every one is a hook or an addition; none removes an upstream feature (R5).
@@ -1740,7 +1766,7 @@ Every one is a hook or an addition; none removes an upstream feature (R5).
 | `lib/domain/utils/background_sync.dart` | One added callback, fired by every path that applies server state (§3.3) |
 | `lib/providers/background_sync.provider.dart` | Wire it to a coalesced `check` |
 | `lib/utils/image_url_builder.dart` | One optional cache buster on `/original` (§3.4) |
-| `lib/presentation/widgets/images/image_provider.dart` | Pass `isEdited` through, which decides that buster |
+| `lib/presentation/widgets/images/image_provider.dart` | Pass `isEdited` through, which decides that buster; pass the viewer's original ask through, and say which server id a photo renders from (§3.6) |
 | `lib/presentation/pages/edit/drift_edit.page.dart` | A failed save reports the server's reason, like every other action |
 | `lib/pages/common/settings.page.dart` | One added entry for the offline screen |
 | `lib/widgets/common/app_bar_dialog/app_bar_dialog.dart` | One added entry; fork sign-out dialog (R2) |
@@ -1752,7 +1778,9 @@ Every one is a hook or an addition; none removes an upstream feature (R5).
 | `lib/widgets/common/immich_sliver_app_bar.dart` | One added button and its own `showOfflineButton` gate (§3.6) |
 | `lib/presentation/widgets/images/thumbnail_tile.widget.dart` | Upstream's cloud wrapped with the mirror's meter (§3.6) |
 | `lib/presentation/pages/drift_asset_troubleshoot.page.dart` | Five rows of the mirror's own view of an asset, behind upstream's *Advanced troubleshooting* flag: what the badge and the download rules each decided, in one place |
-| `lib/presentation/widgets/images/remote_image_provider.dart` | Show a stored original even with `loadOriginal` off |
+| `lib/presentation/widgets/images/remote_image_provider.dart` | Show a stored original even with `loadOriginal` off; load one asked for by hand, failing soft (§3.6) |
+| `lib/presentation/widgets/asset_viewer/asset_page.widget.dart` | Rebuild the photo's provider when its original is asked for (§3.6) |
+| `lib/presentation/widgets/asset_viewer/viewer_top_app_bar.widget.dart` | One added button beside the favourite (§3.6) |
 | `lib/presentation/widgets/asset_viewer/video_viewer.widget.dart` | Play stored videos from disk |
 | `lib/repositories/asset_media.repository.dart` | Share a stored copy instead of re-downloading |
 | `lib/services/api.service.dart` | Re-seed the auth cookie from the stored token |
@@ -2091,9 +2119,6 @@ re-verify by hand:
   open off-grid. Telling them apart needs a `PHAsset` residency check. Until then,
   *Save offline* on those items fetches the app's own copy regardless, which is the
   way out that exists today.
-- **Android is not implemented.** The read path is Swift; on Android images would
-  still stream from the server. The equivalent hook is in
-  `android/app/src/main/kotlin/app/alextran/immich/images/`.
 - **Flipping "load original videos" takes every video offline until it is
   re-fetched.** It changes which file the player asks for, so every stored video
   is superseded at once: the old one is deleted on the next pass and the new one

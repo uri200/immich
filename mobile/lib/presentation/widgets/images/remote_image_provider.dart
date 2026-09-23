@@ -8,6 +8,7 @@ import 'package:immich_mobile/infrastructure/repositories/settings.repository.da
 import 'package:immich_mobile/presentation/widgets/images/animated_image_stream_completer.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/one_frame_multi_image_stream_completer.dart';
+import 'package:immich_mobile/presentation/widgets/images/viewer_originals.dart';
 import 'package:immich_mobile/utils/image_url_builder.dart';
 import 'package:immich_mobile/utils/offline_paths.dart';
 import 'package:openapi/api.dart';
@@ -82,6 +83,10 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
   /// Physical size of the thumbnail shown before the preview.
   final Size? thumbnailSize;
 
+  /// immich-sync fork: how many times the viewer's quality button asked for this photo's
+  /// original ([ViewerOriginals.attemptOf]). Zero is upstream's behaviour.
+  final int originalAttempt;
+
   RemoteFullImageProvider({
     required this.assetId,
     required this.thumbhash,
@@ -90,11 +95,15 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
     this.edited = true,
     this.isEdited = false,
     this.thumbnailSize,
+    this.originalAttempt = 0,
   });
 
   /// immich-sync fork: one definition for both branches below, so the viewer and
   /// the mirror cannot ask for the same bytes under two names.
   String get _originalUrl => offlineOriginalUrl(assetId, isEdited: isEdited, thumbHash: thumbhash, edited: edited);
+
+  String get _previewUrl =>
+      getThumbnailUrlForRemoteId(assetId, type: AssetMediaSize.preview, thumbhash: thumbhash, edited: edited);
 
   @override
   Future<RemoteFullImageProvider> obtainKey(ImageConfiguration configuration) {
@@ -121,13 +130,17 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
 
     return OneFramePlaceholderImageStreamCompleter(
       _codec(key, decode),
+      // immich-sync fork: an original asked for by hand starts from the preview already on
+      // screen, so the tap never drops the photo to its thumbnail before sharpening it.
       initialImage: getInitialImage(
-        RemoteImageProvider.thumbnail(
-          assetId: key.assetId,
-          thumbhash: key.thumbhash,
-          edited: key.edited,
-          decodeSize: key.thumbnailSize,
-        ),
+        key.originalAttempt > 0
+            ? RemoteImageProvider(url: key._previewUrl, edited: key.edited)
+            : RemoteImageProvider.thumbnail(
+                assetId: key.assetId,
+                thumbhash: key.thumbhash,
+                edited: key.edited,
+                decodeSize: key.thumbnailSize,
+              ),
       ),
       informationCollector: () => <DiagnosticsNode>[
         DiagnosticsProperty<ImageProvider>('Image provider', this),
@@ -145,22 +158,20 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
       return;
     }
 
-    final previewRequest = request = RemoteImageRequest(
-      uri: getThumbnailUrlForRemoteId(
-        key.assetId,
-        type: AssetMediaSize.preview,
-        thumbhash: key.thumbhash,
-        edited: key.edited,
-      ),
-    );
     // immich-sync fork: a stored original costs no network, so an item kept at
     // full quality shows the real photo even with the setting off. Otherwise
     // "full quality" would download originals nothing ever reads.
+    final requested = key.originalAttempt > 0;
     final loadOriginal =
         assetType == AssetType.image &&
         (SettingsRepository.instance.appConfig.image.loadOriginal ||
-            OfflineIndex.availability(key.assetId) == OfflineAvailability.full);
-    yield* loadRequest(previewRequest, decode, isFinal: !loadOriginal);
+            OfflineIndex.availability(key.assetId) == OfflineAvailability.full ||
+            requested);
+    // Asked for by hand, the preview is already the initial image.
+    if (!requested) {
+      final previewRequest = request = RemoteImageRequest(uri: key._previewUrl);
+      yield* loadRequest(previewRequest, decode, isFinal: !loadOriginal);
+    }
 
     if (!loadOriginal) {
       return;
@@ -171,7 +182,30 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
     }
 
     final originalRequest = request = RemoteImageRequest(uri: key._originalUrl);
-    yield* loadRequest(originalRequest, decode, isFinal: true);
+    yield* _loadOriginal(key.assetId, originalRequest, decode, failSoft: requested);
+  }
+
+  /// immich-sync fork: tells [ViewerOriginals] whether the original reached the screen, for
+  /// the viewer's quality button. One asked for by hand fails soft — the preview stays up and
+  /// the button offers a retry — where upstream's error path would swap in the thumbnail.
+  Stream<ImageInfo> _loadOriginal(
+    String assetId,
+    RemoteImageRequest originalRequest,
+    ImageDecoderCallback decode, {
+    required bool failSoft,
+  }) async* {
+    var shown = false;
+    try {
+      await for (final image in loadRequest(originalRequest, decode, isFinal: !failSoft)) {
+        shown = true;
+        yield image;
+      }
+    } finally {
+      if (!isCancelled) {
+        ViewerOriginals.instance.settle(assetId, loaded: shown);
+      }
+    }
+    isFinished = true;
   }
 
   Stream<Object> _animatedCodec(RemoteFullImageProvider key, ImageDecoderCallback decode) async* {
@@ -217,12 +251,19 @@ class RemoteFullImageProvider extends CancellableImageProvider<RemoteFullImagePr
           thumbhash == other.thumbhash &&
           isAnimated == other.isAnimated &&
           edited == other.edited &&
-          isEdited == other.isEdited;
+          isEdited == other.isEdited &&
+          originalAttempt == other.originalAttempt;
     }
 
     return false;
   }
 
   @override
-  int get hashCode => assetId.hashCode ^ thumbhash.hashCode ^ isAnimated.hashCode ^ edited.hashCode ^ isEdited.hashCode;
+  int get hashCode =>
+      assetId.hashCode ^
+      thumbhash.hashCode ^
+      isAnimated.hashCode ^
+      edited.hashCode ^
+      isEdited.hashCode ^
+      originalAttempt.hashCode;
 }

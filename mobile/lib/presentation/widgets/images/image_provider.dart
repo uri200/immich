@@ -156,6 +156,8 @@ ImageProvider getFullImageProvider(
   bool edited = true,
   String? localFilePath,
   Size? remoteThumbnailSize,
+  // immich-sync fork: see [RemoteFullImageProvider.originalAttempt].
+  int originalAttempt = 0,
 }) {
   // Create new provider and cache it
   final ImageProvider provider;
@@ -193,6 +195,7 @@ ImageProvider getFullImageProvider(
       // immich-sync fork: decides the URL the original is stored and read under.
       isEdited: asset.isEdited,
       thumbnailSize: remoteThumbnailSize,
+      originalAttempt: originalAttempt,
     );
   }
 
@@ -217,6 +220,18 @@ ImageProvider? getThumbnailImageProvider(
   return assetId != null
       ? RemoteImageProvider.thumbnail(assetId: assetId, thumbhash: thumbhash, edited: edited, decodeSize: remoteSize)
       : null;
+}
+
+/// immich-sync fork: the server id [getFullImageProvider] would load [asset] from, or null
+/// when it renders the phone's own file instead.
+String? remoteFullImageId(BaseAsset asset) {
+  if (_shouldUseLocalAsset(asset)) {
+    return null;
+  }
+  return switch (asset) {
+    RemoteAsset() => asset.id,
+    LocalAsset() => asset.remoteId,
+  };
 }
 
 bool _shouldUseLocalAsset(BaseAsset asset) =>

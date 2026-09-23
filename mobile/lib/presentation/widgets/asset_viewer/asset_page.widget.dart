@@ -19,6 +19,7 @@ import 'package:immich_mobile/presentation/widgets/asset_viewer/video_viewer.wid
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/progressive_image.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/images/viewer_originals.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/is_motion_video_playing.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
@@ -354,44 +355,52 @@ class _AssetPageState extends ConsumerState<AssetPage> {
     required Size? remoteThumbnailSize,
   }) {
     final size = context.sizeData;
-    final imageProvider = getFullImageProvider(
+    ImageProvider fullImageProvider({int originalAttempt = 0}) => getFullImageProvider(
       asset,
       size: size,
       localFilePath: localFilePath,
       remoteThumbnailSize: remoteThumbnailSize,
+      originalAttempt: originalAttempt,
     );
 
     if (asset.isImage && !isPlayingMotionVideo) {
-      return ProgressiveImage(
-        provider: imageProvider,
-        builder: (context, provider) => PhotoView(
-          key: Key(asset.heroTag),
-          index: widget.index,
-          imageProvider: provider,
-          heroAttributes: heroAttributes,
-          loadingBuilder: (context, progress, index) => const Center(child: ImmichLoadingIndicator()),
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.high,
-          tightMode: true,
-          enablePanAlways: true,
-          maxScale: PhotoViewComputedScale.contained * _maxScaleMultiplier,
-          disableScaleGestures: _showingDetails,
-          scaleStateChangedCallback: _onScaleStateChanged,
-          onPageBuild: _onPageBuild,
-          onDragStart: _onDragStart,
-          onDragUpdate: _onDragUpdate,
-          onDragEnd: _onDragEnd,
-          onDragCancel: _onDragCancel,
-          onTapUp: _onTapUp,
-          onLongPressStart: asset.isMotionPhoto ? _onLongPress : null,
-          errorBuilder: (_, _, _) => SizedBox(
-            width: size.width,
-            height: size.height,
-            child: Thumbnail.fromAsset(asset: asset, fit: BoxFit.contain),
+      // immich-sync fork: the quality button asks for an original by bumping its attempt,
+      // which changes the provider's key and so starts a load that goes past the preview.
+      return ListenableBuilder(
+        listenable: ViewerOriginals.instance,
+        builder: (context, _) => ProgressiveImage(
+          provider: fullImageProvider(originalAttempt: ViewerOriginals.instance.attemptOf(remoteFullImageId(asset))),
+          builder: (context, provider) => PhotoView(
+            key: Key(asset.heroTag),
+            index: widget.index,
+            imageProvider: provider,
+            heroAttributes: heroAttributes,
+            loadingBuilder: (context, progress, index) => const Center(child: ImmichLoadingIndicator()),
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.high,
+            tightMode: true,
+            enablePanAlways: true,
+            maxScale: PhotoViewComputedScale.contained * _maxScaleMultiplier,
+            disableScaleGestures: _showingDetails,
+            scaleStateChangedCallback: _onScaleStateChanged,
+            onPageBuild: _onPageBuild,
+            onDragStart: _onDragStart,
+            onDragUpdate: _onDragUpdate,
+            onDragEnd: _onDragEnd,
+            onDragCancel: _onDragCancel,
+            onTapUp: _onTapUp,
+            onLongPressStart: asset.isMotionPhoto ? _onLongPress : null,
+            errorBuilder: (_, _, _) => SizedBox(
+              width: size.width,
+              height: size.height,
+              child: Thumbnail.fromAsset(asset: asset, fit: BoxFit.contain),
+            ),
           ),
         ),
       );
     }
+
+    final imageProvider = fullImageProvider();
 
     return PhotoView.customChild(
       key: Key(asset.heroTag),
