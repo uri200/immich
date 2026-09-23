@@ -1,7 +1,7 @@
 # Prebuilt APK
 
-
 Easiest download on a phone (served as an Android app, opens the installer): https://github.com/uri200/immich/releases/latest/download/immich-offline-arm64.apk
+
 `immich-offline-arm64.apk` — Android release build of this branch (`offline-mirror`), arm64 only.
 
 - Built from: `25465edd1`
