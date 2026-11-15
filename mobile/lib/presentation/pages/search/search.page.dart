@@ -19,6 +19,7 @@ import 'package:immich_mobile/presentation/widgets/bottom_sheet/general_bottom_s
 import 'package:immich_mobile/presentation/widgets/search/quick_date_picker.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
+import 'package:immich_mobile/providers/search/ocr_search_highlight.provider.dart';
 import 'package:immich_mobile/providers/search/search_input_focus.provider.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -86,6 +87,8 @@ class SearchPage extends HookConsumerWidget {
       }
 
       filter.value = f;
+      // immich-sync fork: the viewer marks this text in photos opened from the results.
+      ref.read(ocrSearchQueryProvider.notifier).set(f.ocr);
 
       ref.read(paginatedSearchProvider.notifier).clear();
 

@@ -7,6 +7,7 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/ocr.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/utils/ocr_match.utils.dart';
 import 'package:immich_mobile/widgets/photo_view/photo_view.dart';
 
 class OcrOverlay extends ConsumerStatefulWidget {
@@ -15,12 +16,21 @@ class OcrOverlay extends ConsumerStatefulWidget {
   final Size viewportSize;
   final PhotoViewControllerBase? controller;
 
+  /// immich-sync fork: draw every recognised box (the "Text recognition" toggle), or only
+  /// [matchSpans].
+  final bool showAllText;
+
+  /// immich-sync fork: the text an OCR search matched, marked apart from the other boxes.
+  final List<OcrMatchSpan> matchSpans;
+
   const OcrOverlay({
     super.key,
     required this.asset,
     required this.imageSize,
     required this.viewportSize,
     this.controller,
+    this.showAllText = true,
+    this.matchSpans = const [],
   });
 
   @override
@@ -106,6 +116,8 @@ class _OcrOverlayState extends ConsumerState<OcrOverlay> {
           controllerValue: _controllerValue,
           selectedBoxIndex: _selectedBoxIndex,
           onSelectionChanged: (index) => setState(() => _selectedBoxIndex = index),
+          showAllText: widget.showAllText,
+          matchSpans: widget.matchSpans,
         );
       },
       loading: () => const SizedBox.shrink(),
@@ -122,6 +134,8 @@ class _OcrBoxes extends StatelessWidget {
   final PhotoViewControllerValue? controllerValue;
   final int? selectedBoxIndex;
   final ValueChanged<int?> onSelectionChanged;
+  final bool showAllText;
+  final List<OcrMatchSpan> matchSpans;
 
   const _OcrBoxes({
     required this.ocrData,
@@ -131,6 +145,8 @@ class _OcrBoxes extends StatelessWidget {
     required this.controllerValue,
     required this.selectedBoxIndex,
     required this.onSelectionChanged,
+    required this.showAllText,
+    required this.matchSpans,
   });
 
   @override
@@ -180,6 +196,9 @@ class _OcrBoxes extends StatelessWidget {
       final maxY = [y1, y2, y3, y4].reduce((a, b) => a > b ? a : b);
 
       quads.add([Offset(x1, y1), Offset(x2, y2), Offset(x3, y3), Offset(x4, y4)]);
+      if (!showAllText) {
+        continue;
+      }
 
       boxes.add(
         _OcrBoxItem(
@@ -205,6 +224,22 @@ class _OcrBoxes extends StatelessWidget {
       );
     }
 
+    final matchQuads = [
+      for (final span in matchSpans)
+        if (span.boxIndex < quads.length)
+          ocrSpanQuad(quads[span.boxIndex], ocrData[span.boxIndex].text.length, span.start, span.end),
+    ];
+    final matchLayer = IgnorePointer(
+      child: CustomPaint(
+        size: Size(viewportWidth, viewportHeight),
+        painter: _OcrMatchPainter(quads: matchQuads),
+      ),
+    );
+
+    if (!showAllText) {
+      return ClipRect(child: matchLayer);
+    }
+
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => onSelectionChanged(null),
@@ -220,6 +255,7 @@ class _OcrBoxes extends StatelessWidget {
               ),
             ),
             ...boxes,
+            if (matchQuads.isNotEmpty) Positioned.fill(child: matchLayer),
           ],
         ),
       ),
@@ -383,4 +419,64 @@ class _OcrBoxPainter extends CustomPainter {
   bool shouldRepaint(_OcrBoxPainter oldDelegate) {
     return oldDelegate.isSelected != isSelected || !listEquals(oldDelegate.points, points);
   }
+}
+
+/// immich-sync fork: the part of a text box's [quad] that holds characters `[start, end)` of
+/// its [textLength]-long text.
+///
+/// OCR only gives a box per line, so a word's place in it is estimated from its share of the
+/// characters, padded a little either side. Vertical boxes are returned whole, since their
+/// text doesn't run along the top edge.
+List<Offset> ocrSpanQuad(List<Offset> quad, int textLength, int start, int end) {
+  final width = (quad[1] - quad[0]).distance;
+  final height = (quad[3] - quad[0]).distance;
+  if (textLength <= 0 || height > width * 1.5) {
+    return quad;
+  }
+  const padChars = 0.35;
+  final from = ((start - padChars) / textLength).clamp(0.0, 1.0);
+  final to = ((end + padChars) / textLength).clamp(0.0, 1.0);
+  return [
+    Offset.lerp(quad[0], quad[1], from)!,
+    Offset.lerp(quad[0], quad[1], to)!,
+    Offset.lerp(quad[3], quad[2], to)!,
+    Offset.lerp(quad[3], quad[2], from)!,
+  ];
+}
+
+/// immich-sync fork: marks OCR search matches in amber, so they stand out from the blue
+/// "Text recognition" boxes.
+class _OcrMatchPainter extends CustomPainter {
+  final List<List<Offset>> quads;
+
+  const _OcrMatchPainter({required this.quads});
+
+  static const _color = Colors.amber;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fill = Paint()
+      ..color = _color.withValues(alpha: 0.3)
+      ..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..color = _color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeJoin = StrokeJoin.round;
+
+    for (final quad in quads) {
+      final path = Path()
+        ..moveTo(quad[0].dx, quad[0].dy)
+        ..lineTo(quad[1].dx, quad[1].dy)
+        ..lineTo(quad[2].dx, quad[2].dy)
+        ..lineTo(quad[3].dx, quad[3].dy)
+        ..close();
+      canvas
+        ..drawPath(path, fill)
+        ..drawPath(path, stroke);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_OcrMatchPainter oldDelegate) => true;
 }

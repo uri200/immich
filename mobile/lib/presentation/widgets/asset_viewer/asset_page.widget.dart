@@ -24,7 +24,9 @@ import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart'
 import 'package:immich_mobile/providers/asset_viewer/is_motion_video_playing.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
+import 'package:immich_mobile/providers/search/ocr_search_highlight.provider.dart';
 import 'package:immich_mobile/providers/view_intent/view_intent_file_path.provider.dart';
+import 'package:immich_mobile/utils/ocr_match.utils.dart';
 import 'package:immich_mobile/widgets/common/immich_loading_indicator.dart';
 import 'package:immich_mobile/widgets/photo_view/photo_view.dart';
 
@@ -56,6 +58,8 @@ class _AssetPageState extends ConsumerState<AssetPage> {
   // Frozen during dismiss drag + settle to prevent widget tree swap mid-animation.
   bool _wasMotionPlayingAtDismiss = false;
   bool _isDismissAnimating = false;
+  // immich-sync fork: the asset and query the viewer last zoomed to an OCR match for.
+  String? _ocrJumpKey;
 
   final _scrollController = SnapScrollController();
   double _snapOffset = 0.0;
@@ -333,6 +337,91 @@ class _AssetPageState extends ConsumerState<AssetPage> {
     });
   }
 
+  /// immich-sync fork: zooms to the best OCR match when it's too small to read at the fitted size.
+  void _jumpToOcrMatch(OcrHighlight highlight) {
+    final controller = _viewController;
+    final boundaries = controller?.scaleBoundaries;
+    final best = highlight.best;
+    if (!mounted || controller == null || boundaries == null || best == null || _isZoomed || _showingDetails) {
+      return;
+    }
+
+    final image = boundaries.childSize;
+    final viewport = boundaries.outerSize;
+    var left = double.infinity;
+    var top = double.infinity;
+    var right = -double.infinity;
+    var bottom = -double.infinity;
+    for (final span in best.spans) {
+      if (span.boxIndex >= highlight.boxes.length) {
+        continue;
+      }
+      final box = highlight.boxes[span.boxIndex];
+      final quad = [
+        Offset(box.x1 * image.width, box.y1 * image.height),
+        Offset(box.x2 * image.width, box.y2 * image.height),
+        Offset(box.x3 * image.width, box.y3 * image.height),
+        Offset(box.x4 * image.width, box.y4 * image.height),
+      ];
+      for (final point in ocrSpanQuad(quad, box.text.length, span.start, span.end)) {
+        left = math.min(left, point.dx);
+        right = math.max(right, point.dx);
+        top = math.min(top, point.dy);
+        bottom = math.max(bottom, point.dy);
+      }
+    }
+    if (!left.isFinite || !top.isFinite) {
+      return;
+    }
+
+    // Enough to read the match: 60% of the screen's width or a fifth of its height.
+    final initial = boundaries.initialScale;
+    final readable = math.min(
+      viewport.width * 0.6 / math.max(right - left, 1),
+      viewport.height * 0.2 / math.max(bottom - top, 1),
+    );
+    final scale = readable.clamp(initial, math.max(initial, math.min(boundaries.maxScale, initial * 8))).toDouble();
+    if (scale < initial * 1.2) {
+      return;
+    }
+
+    // The position is the image centre's offset from the viewport centre.
+    final slackX = math.max(0.0, (image.width * scale - viewport.width) / 2);
+    final slackY = math.max(0.0, (image.height * scale - viewport.height) / 2);
+    final position = Offset(
+      (-((left + right) / 2 - image.width / 2) * scale).clamp(-slackX, slackX),
+      (-((top + bottom) / 2 - image.height / 2) * scale).clamp(-slackY, slackY),
+    );
+
+    unawaited(controller.animateMultiple(scale: scale, position: position));
+    // Zooming from code doesn't report a scale state change, so pass it on by hand: without it
+    // the pager would still swipe to the next photo instead of panning this one.
+    _onScaleStateChanged(PhotoViewScaleState.zoomedIn);
+  }
+
+  void _maybeJumpToOcrMatch(BaseAsset asset, OcrHighlight? highlight, {required bool isCurrent}) {
+    final query = ref.read(ocrSearchQueryProvider);
+    if (!isCurrent || highlight == null || highlight.best == null || query == null) {
+      return;
+    }
+    if (_viewController?.scaleBoundaries == null) {
+      return;
+    }
+    final key = '${asset.heroTag}|$query';
+    if (_ocrJumpKey == key) {
+      return;
+    }
+    _ocrJumpKey = key;
+    // Let the opening hero animation finish first.
+    unawaited(
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (mounted && ref.read(assetViewerProvider).currentAsset?.refersToSameAsset(asset) == true) {
+          _jumpToOcrMatch(highlight);
+        }
+      }),
+    );
+  }
+
   double _getImageHeight(double maxWidth, double maxHeight, BaseAsset? asset) {
     final sb = _viewController?.scaleBoundaries;
     if (sb != null) {
@@ -468,6 +557,9 @@ class _AssetPageState extends ConsumerState<AssetPage> {
     }
 
     final isCurrent = currentAsset != null && currentAsset.refersToSameAsset(displayAsset);
+    final ocrHighlight = watchOcrHighlight(ref, displayAsset);
+    final ocrMatchSpans = [for (final match in ocrHighlight?.matches ?? const <OcrMatch>[]) ...match.spans];
+    _maybeJumpToOcrMatch(displayAsset, ocrHighlight, isCurrent: isCurrent);
 
     final viewportWidth = MediaQuery.widthOf(context);
     final viewportHeight = MediaQuery.heightOf(context);
@@ -507,13 +599,17 @@ class _AssetPageState extends ConsumerState<AssetPage> {
                     remoteThumbnailSize: thumbnailSize,
                   ),
                 ),
-                if (showingOcr && displayAsset.width != null && displayAsset.height != null)
+                if ((showingOcr || ocrMatchSpans.isNotEmpty) &&
+                    displayAsset.width != null &&
+                    displayAsset.height != null)
                   Positioned.fill(
                     child: OcrOverlay(
                       asset: displayAsset,
                       imageSize: Size(displayAsset.width!.toDouble(), displayAsset.height!.toDouble()),
                       viewportSize: Size(viewportWidth, viewportHeight),
                       controller: _viewController,
+                      showAllText: showingOcr,
+                      matchSpans: ocrMatchSpans,
                     ),
                   ),
                 IgnorePointer(

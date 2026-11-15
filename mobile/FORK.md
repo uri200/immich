@@ -6,7 +6,7 @@ exactly, and the app works against an unmodified Immich server.
 
 ## 0. This branch
 
-This is `uri200/immich`, branch `offline-mirror`: rcarpa's stack (§5, *Rebasing*) on an upstream release tag, with two
+This is `uri200/immich`, branch `offline-mirror`: rcarpa's stack (§5, *Rebasing*) on an upstream release tag, with three
 differences.
 
 - **No identity commit.** `Mirrich, an identity and a build of its own` is left out, so the app keeps upstream's name,
@@ -15,6 +15,8 @@ differences.
 - **Full quality on demand**, one commit on top (`feat(mobile): full quality on demand in the viewer`, §3.8). It also
   brings back an earlier rule of this fork: a photo whose original is stored offline shows that original even with
   *Load original image* off, since reading it costs no network.
+- **OCR search matches marked in the viewer**, one more commit (`feat(mobile): mark what an OCR search matched in the
+  viewer`, §3.8). Phone only; the server is stock.
 
 ## 1. What this fork is
 
@@ -292,6 +294,15 @@ signs in the cached user (`resumeAuthInfo`), so the library and owner-only actio
   in `RemoteFullImageProvider`'s key, so each tap is a fresh load and a retry is not served the failure; that load skips
   the thumbnail placeholder, so the preview on screen stays up until it is replaced, and it fails soft, where upstream's
   error path would swap the photo for its thumbnail.
+- **OCR search matches** (this branch only, §0): a photo opened from a search by text in photos has the matched words
+  outlined in amber, apart from upstream's blue *Text recognition* boxes. It zooms to the closest match when that match
+  is too small to read, and the details sheet gets a *Matched text* section. The search page records its OCR query
+  (`ocrSearchQueryProvider`), and the viewer uses it only when its timeline came from search. `ocr_match.utils.dart`
+  re-runs the server's test on the OCR rows sync already stored: `ocr_search.text %>> query` is pg_trgm's strict word
+  similarity at its default 0.5, over `tokenizeForSearch` tokens joined in box order. So the marks land on what the
+  server matched, near misses included ("dent" for "dental" scores exactly 0.5). OCR boxes are whole lines, so a word's
+  place in its line is estimated from its share of the characters. Zooming from code reports no scale state, so the page
+  passes `zoomedIn` on by hand; otherwise the pager would still swipe instead of panning.
 
 Fork strings are English only, to keep out of upstream's i18n files.
 
@@ -317,6 +328,7 @@ hook tagged `// immich-sync fork`:
 | `lib/utils/image_url_builder.dart`, `lib/presentation/widgets/images/*` | One URL for the original, so a stored one is served. On this branch (§0) a stored original, or one asked for by the viewer's button, also loads with the setting off |
 | `lib/presentation/widgets/asset_viewer/asset_page.widget.dart`, `viewer_top_app_bar.widget.dart` | This branch (§0): rebuild the photo's provider when its original is asked for; the button beside the favourite |
 | `lib/presentation/widgets/asset_viewer/video_viewer.widget.dart` | Play stored videos from disk |
+| `lib/presentation/widgets/asset_viewer/asset_page.widget.dart`, `ocr_overlay.widget.dart`, `asset_details.widget.dart`, `lib/presentation/pages/search/search.page.dart` | This branch (§0): record the OCR query; mark its matches, zoom to the best one, list them in the details |
 | `lib/repositories/asset_media.repository.dart` | Share a stored copy instead of downloading |
 | `lib/presentation/widgets/images/thumbnail_tile.widget.dart` | The tile bar under upstream's glyph |
 | `lib/presentation/widgets/bottom_sheet/*`, `lib/utils/action_button.utils.dart` | Save offline beside Download |
@@ -373,6 +385,7 @@ The fork is a stack of commits on an upstream release tag, the ones that could g
 | `feat(mobile): Mirrich, an identity and a build of its own` | §4.1 | Fork only |
 | `docs(mobile): the fork's requirements and design` | This file | Fork only |
 | `feat(mobile): full quality on demand in the viewer` | §0, §3.8; this branch only, without the identity commit | Fork only |
+| `feat(mobile): mark what an OCR search matched in the viewer` | §0, §3.8; this branch only | Could be proposed alone |
 
 Every commit builds and passes the tests on its own, and none needs the ones above it. A change goes into the commit
 that owns it, not on top. After a rebase, check:
